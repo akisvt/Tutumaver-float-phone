@@ -7,6 +7,7 @@ import type { MemoryEntry } from "./memory-types";
 import { archiveChatOfflineScene, assertChatOfflineSceneUnchanged, ensureChatOfflineScene, loadChatOfflineSceneState, loadChatOfflineTurns, updateChatOfflineArchive, type ChatOfflineScene, type ChatOfflineArchive } from "./chat-offline-storage";
 
 export const DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT = 100_000;
+export const DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT = 64_000;
 
 export type OfflineSceneDraft = { scene: ChatOfflineScene; fingerprint: string; summary: string };
 export function validateOfflineStoryTime(start: string, end?: string): void {
@@ -18,7 +19,7 @@ export function offlineStoryLabel(start: string, end?: string): string {
     return `${fmt(start)}${end ? ` — ${fmt(end)}` : "（结束时间未指定）"}`;
 }
 
-export async function summarizeChatOfflineScene(session: ChatSession, signal?: AbortSignal, storyStart?: string, storyEnd?: string, directCharLimit = DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT): Promise<OfflineSceneDraft> {
+export async function summarizeChatOfflineScene(session: ChatSession, signal?: AbortSignal, storyStart?: string, storyEnd?: string, directCharLimit = DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT, chunkCharLimit = DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT): Promise<OfflineSceneDraft> {
     const scene = ensureChatOfflineScene(session.id, session.contactId);
     const turns = loadChatOfflineTurns(session.id);
     if (!turns.length) throw new Error("本次还没有线下内容。");
@@ -68,7 +69,6 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
     if (JSON.stringify(original).length <= directCharLimit) {
         summary = await ask(instructions, { storyTime, turns: original }, 2048, "");
     } else {
-        const chunkLimit = Math.floor(directCharLimit * 0.64);
         const chunks: string[] = [];
         let pending = "";
         const flush = () => { if (pending) { chunks.push(pending); pending = ""; } };
@@ -77,11 +77,11 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
                 "\n角色：" + turns[index].assistantContent + "\n";
             let position = 0;
             while (position < row.length) {
-                const room = chunkLimit - pending.length;
+                const room = chunkCharLimit - pending.length;
                 if (!room) { flush(); continue; }
                 pending += row.slice(position, position + room);
                 position += room;
-                if (pending.length === chunkLimit) flush();
+                if (pending.length === chunkCharLimit) flush();
             }
         }
         flush();
