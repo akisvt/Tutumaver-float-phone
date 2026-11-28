@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { Clock, Folder, ChevronRight, X } from "lucide-react";
 import type { ChatSession } from "@/lib/chat-storage";
 import { ensureChatOfflineScene, loadChatOfflineSceneState, loadChatOfflineTurns, updateChatOfflineScene, deleteChatOfflineArchive, OFFLINE_SCENE_UPDATED, type ChatOfflineArchive } from "@/lib/chat-offline-storage";
-import { DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT, DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT, saveChatOfflineScene, summarizeChatOfflineScene, editChatOfflineArchive, offlineStoryLabel, validateOfflineStoryTime, type OfflineSceneDraft } from "@/lib/chat-offline-scene-memory";
+import { DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT, DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT, saveChatOfflineScene, summarizeChatOfflineScene, summarizeChatOfflineArchive, editChatOfflineArchive, offlineStoryLabel, validateOfflineStoryTime, type OfflineSceneDraft } from "@/lib/chat-offline-scene-memory";
 import { kvGet, kvSet } from "@/lib/kv-db";
 import { loadCharacters } from "@/lib/character-storage";
 import { offlineSpeakerMap } from "@/lib/offline-speakers";
@@ -37,12 +37,12 @@ export function OfflineSceneControls({ session, turnCount, generating, getContai
     const [directCharLimit, setDirectCharLimit] = useState(() => kvGet(OFFLINE_SUMMARY_DIRECT_LIMIT_KEY) ?? String(DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT));
     const [chunkCharLimit, setChunkCharLimit] = useState(() => kvGet(OFFLINE_SUMMARY_CHUNK_LIMIT_KEY) ?? String(DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT));
     const [participants, setParticipants] = useState<string[]>([]);
-    const roster = loadCharacters().filter(c=>session.participantIds?.includes(c.id));
     const speakers = offlineSpeakerMap(session);
     const [status, setStatus] = useState<"active" | "paused">("active");
     const [busy, setBusy] = useState(false); const [error, setError] = useState("");
     const [archives, setArchives] = useState<ChatOfflineArchive[]>([]);
     const [selected, setSelected] = useState<ChatOfflineArchive | null>(null);
+    const roster = loadCharacters().filter(c => session.participantIds?.includes(c.id) || (view === "edit" && selected?.participantIds?.includes(c.id)));
     const request = useRef<AbortController | null>(null); const locked = useRef(false); const saving = useRef(false); const alive = useRef(true);
     const latest = useRef({ generating, turnCount, getContainer }); latest.current = { generating, turnCount, getContainer };
     function refresh() { setArchives(loadChatOfflineSceneState(session.id)?.archives || []); }
@@ -86,9 +86,13 @@ export function OfflineSceneControls({ session, turnCount, generating, getContai
         try {
             kvSet(OFFLINE_SUMMARY_DIRECT_LIMIT_KEY, String(limit));
             kvSet(OFFLINE_SUMMARY_CHUNK_LIMIT_KEY, String(chunkLimit));
-            const result = await summarizeChatOfflineScene(session, controller.signal, start, end, limit, chunkLimit);
+            const archived = view === "edit" && selected;
+            const result = archived
+                ? await summarizeChatOfflineArchive(session, archived.id, controller.signal, start, end || undefined, limit, chunkLimit)
+                : await summarizeChatOfflineScene(session, controller.signal, start, end, limit, chunkLimit);
             if (!alive.current || controller.signal.aborted || request.current !== controller) return;
-            setDraft(result); setSummary(result.summary);
+            if (typeof result === "string") setSummary(result);
+            else { setDraft(result); setSummary(result.summary); }
         } catch(e) { if (alive.current && !controller.signal.aborted && request.current === controller) setError(e instanceof Error ? e.message : "总结失败，原文已保留。"); }
         finally { if (request.current === controller) { locked.current = false; if (alive.current) setBusy(false); } }
     }
@@ -135,17 +139,30 @@ export function OfflineSceneControls({ session, turnCount, generating, getContai
             <header><strong>{view === "confirm" ? "结束本次线下？" : view === "clock" ? "本场时间与状态" : view === "archives" ? selected?.title || "往期归档" : "归档详情"}</strong><button type="button" disabled={saving.current} aria-label={selected && view === "archives" ? "返回列表" : "关闭"} onClick={selected && view === "archives" ? () => setSelected(null) : close}>{selected && view === "archives" ? "返回" : <X size={18} />}</button></header>
             {view === "confirm" ? <><p>结束后整理整场总结，审阅保存后进入短期记忆并归档。</p>{error ? <p role="alert" className="chat-offline-scenes-error">{error}</p> : null}<footer><button onClick={close}>取消</button><button disabled={!turnCount || !!error} onClick={beginSummary}>结束</button></footer></> : view === "clock" ? <>{timeFields}<div className="offline-state-choices"><button aria-pressed={status === "active"} onClick={() => setStatus("active")}>进行中</button><button aria-pressed={status === "paused"} onClick={() => setStatus("paused")}>暂停 · 待续写</button></div><p>暂停保留本场进度，不将角色锁定在现场。故事时间可手动调整。</p>{error ? <p role="alert" className="chat-offline-scenes-error">{error}</p> : null}<footer><button onClick={close}>取消</button><button onClick={saveClock}>保存</button></footer></> : view === "summary" || view === "edit" ? <>
                 <label>标题<input aria-label="归档标题" value={title} disabled={busy} placeholder="给这次见面起个名字" onChange={e => setTitle(e.target.value)} /></label>
-                {timeFields}{session.isGroup ? <fieldset className="offline-participants"><legend>本场实际参与者（请核对，只有勾选者接收场次总结）</legend>{roster.map(c=><label key={c.id}><input type="checkbox" checked={participants.includes(c.id)} disabled={busy} onChange={e=>setParticipants(ids=>e.target.checked?[...ids,c.id]:ids.filter(id=>id!==c.id))}/>{c.name}</label>)}</fieldset> : null}<label>线下总结<textarea aria-label="整场摘要" value={summary} disabled={busy} onChange={e => setSummary(e.target.value)} placeholder={busy ? "正在整理整场经历…" : "直接手写本场总结，也可以点击“生成总结”"} /></label>
-                {view === "summary" ? <>
-                <label>整场直发上限（字符）
-                    <input type="number" inputMode="numeric" min={1000} step={1} value={directCharLimit} disabled={busy} onChange={e => setDirectCharLimit(e.target.value)} />
-                    <small>超过这个数字时开始分段。</small>
-                </label>
-                <label>分段后每块上限（字符）
-                    <input type="number" inputMode="numeric" min={1000} step={1} value={chunkCharLimit} disabled={busy} onChange={e => setChunkCharLimit(e.target.value)} />
-                </label>
-                </> : null}
-                {error ? <p role="alert" className="chat-offline-scenes-error">{error}</p> : null}<footer>{view === "summary" ? <button disabled={busy} onClick={() => void generate()}>{summary.trim() ? "重新生成总结" : "生成总结"}</button> : <button disabled={busy} onClick={() => { setView("archives"); onBusyChange(false); }}>取消</button>}<button disabled={busy || !summary.trim() || !title.trim() || !start} onClick={() => void save()}>{busy ? "处理中…" : "保存"}</button></footer>
+                {timeFields}{session.isGroup ? <fieldset className="offline-participants"><legend>本场实际参与者（请核对，只有勾选者接收场次总结）</legend>{roster.map(c=><label key={c.id}><input type="checkbox" checked={participants.includes(c.id)} disabled={busy} onChange={e=>setParticipants(ids=>e.target.checked?[...ids,c.id]:ids.filter(id=>id!==c.id))}/>{c.name}</label>)}</fieldset> : null}<label>线下总结<textarea aria-label="整场摘要" value={summary} disabled={busy} aria-busy={busy} onChange={e => setSummary(e.target.value)} placeholder={busy ? "正在整理整场经历…" : "直接手写本场总结，也可以点击“生成总结”"} /></label>
+                <details>
+                    <summary className="cursor-pointer">总结输入上限</summary>
+                    <div className="mt-2 grid gap-2">
+                        <label>整场直发上限（字符）
+                            <input type="number" inputMode="numeric" min={1000} step={1} value={directCharLimit} disabled={busy} onChange={e => setDirectCharLimit(e.target.value)} />
+                            <small>超过这个数字时开始分段。</small>
+                        </label>
+                        <label>分段后每块上限（字符）
+                            <input type="number" inputMode="numeric" min={1000} step={1} value={chunkCharLimit} disabled={busy} onChange={e => setChunkCharLimit(e.target.value)} />
+                        </label>
+                    </div>
+                </details>
+                {view === "edit" ? <p>{selected?.turns?.length ? "保存后覆盖这场归档的总结和对应记忆。" : "这场归档没有保存原文，可以手动编辑总结。"}</p> : null}
+                {busy && !saving.current ? <p role="status">正在重新整理场次原文…</p> : null}
+                {error ? <p role="alert" className="chat-offline-scenes-error">{error}</p> : null}
+                <footer>
+                    <button type="button" disabled={busy || (view === "edit" && !selected?.turns?.length)} onClick={() => void generate()}>
+                        {view === "edit" || summary.trim() ? "重新生成总结" : "生成总结"}
+                    </button>
+                    <button type="button" disabled={busy || !summary.trim() || !title.trim() || !start} onClick={() => void save()}>
+                        {busy ? "处理中…" : view === "edit" ? "保存并覆盖" : "保存"}
+                    </button>
+                </footer>
             </> : selected ? <>
                 <p>{offlineStoryLabel(selected.storyStartedAt || selected.startedAt, selected.storyEndedAt)}</p><div className="offline-archive-summary"><h3>线下总结</h3><div className="chat-offline-archive-text">{selected.summary}</div><button type="button" onClick={editArchive}>{selected.memoryTarget === "short_term" ? "编辑归档与短期总结" : "编辑归档与长期记忆"}</button></div><button type="button" className="offline-archive-delete" onClick={() => {
                     if (!window.confirm("删除这份归档及其原文？对应短期总结会移除，已经提炼的长期记忆会保留。")) return;
