@@ -4,7 +4,7 @@ import { resolveAuxiliaryApiConfig, resolveUserIdentity } from "./settings-stora
 import { simpleLLMCall } from "./api-helpers";
 import { loadMemoryEntries, saveMemoryEntry, incrementEventCounter } from "./memory-storage";
 import type { MemoryEntry } from "./memory-types";
-import { archiveChatOfflineScene, assertChatOfflineSceneUnchanged, ensureChatOfflineScene, loadChatOfflineSceneState, loadChatOfflineTurns, updateChatOfflineArchive, type ChatOfflineScene, type ChatOfflineArchive } from "./chat-offline-storage";
+import { archiveChatOfflineScene, assertChatOfflineSceneUnchanged, ensureChatOfflineScene, loadChatOfflineSceneState, loadChatOfflineTurns, updateChatOfflineArchive, type ChatOfflineScene, type ChatOfflineArchive, type ChatOfflineTurn } from "./chat-offline-storage";
 
 export const DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT = 100_000;
 export const DEFAULT_OFFLINE_SUMMARY_CHUNK_LIMIT = 64_000;
@@ -25,8 +25,21 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
     if (!turns.length) throw new Error("本次还没有线下内容。");
     const start = storyStart || scene.storyStartedAt || scene.startedAt;
     const end = storyEnd === undefined ? scene.storyEndedAt : storyEnd;
-    validateOfflineStoryTime(start, end);
     const fingerprint = JSON.stringify(turns);
+    const summary = await summarizeOfflineTurns(session, turns, start, end, signal, directCharLimit, chunkCharLimit);
+    assertChatOfflineSceneUnchanged(session.id, scene.id, fingerprint);
+    return { scene, fingerprint, summary };
+}
+
+export async function summarizeChatOfflineArchive(session: ChatSession, archiveId: string, signal: AbortSignal, start: string, end: string | undefined, directCharLimit: number, chunkCharLimit: number): Promise<string> {
+    const archive = loadChatOfflineSceneState(session.id)?.archives.find(item => item.id === archiveId);
+    if (!archive || archive.characterId !== session.contactId) throw new Error("归档不存在，请重新打开归档。");
+    if (!archive.turns?.length) throw new Error("这场归档没有保存原文，无法重新生成。");
+    return summarizeOfflineTurns(session, archive.turns, start, end, signal, directCharLimit, chunkCharLimit, archive.participantIds);
+}
+
+async function summarizeOfflineTurns(session: ChatSession, turns: ChatOfflineTurn[], start: string, end: string | undefined, signal: AbortSignal | undefined, directCharLimit: number, chunkCharLimit: number, participantIds = session.participantIds): Promise<string> {
+    validateOfflineStoryTime(start, end);
     const api = resolveAuxiliaryApiConfig("memorySummaryApiConfigId");
     if (!api) throw new Error("请设置记忆总结 API，也可以直接手动填写总结。");
     const character = loadCharacters().find(item => item.id === session.contactId);
@@ -36,7 +49,7 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
     const instructions = [
         "将本场线下原文整理成简短的一段中文场次总结，不列固定栏目，不凑字数、不逐句复述。",
         "使用实际姓名、第三人称：" + (session.isGroup
-            ? loadCharacters().filter(c => session.participantIds?.includes(c.id)).map(c => c.name).join("、")
+            ? loadCharacters().filter(c => participantIds?.includes(c.id)).map(c => c.name).join("、")
             : character?.name || "角色") + "、" + (user?.name || "用户") + "。",
         "主要记录实际发生的经过、结果；有重要约定、明确关系或认知变化才写。没有感情变化不要强行推进关系。",
         "采用用户指定的故事时间，不根据现实过去的天数推算剧情时长。结束时间未指定就不编造结束或时长。",
@@ -121,8 +134,7 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
             "\n以下是同一场次按时间顺序提取的分段摘要，请合并为一段最终总结，不重复，不补写未知信息。",
             { storyTime, segmentSummaries: level }, 2048, "·最终合并");
     }
-    assertChatOfflineSceneUnchanged(session.id, scene.id, fingerprint);
-    return { scene, fingerprint, summary };
+    return summary;
 }
 async function writeMemory(session: ChatSession, archive: ChatOfflineArchive): Promise<void> {
     if (!archive.memoryId) throw new Error("旧归档缺少关联记忆标识。");
@@ -158,10 +170,14 @@ export async function saveChatOfflineScene(session: ChatSession, draft: OfflineS
 }
 export async function editChatOfflineArchive(session: ChatSession, archive: ChatOfflineArchive, title: string, summary: string, start: string, end?: string, participantIds?: string[]): Promise<void> {
     if (archive.sessionId !== session.id || archive.characterId !== session.contactId) throw new Error("归档与联系人不一致。");
+    const current = loadChatOfflineSceneState(session.id)?.archives.find(item => item.id === archive.id);
+    if (!current || JSON.stringify(current) !== JSON.stringify(archive)) throw new Error("归档已变化，请重新打开后再编辑。");
     validateOfflineStoryTime(start, end);
     if (!title.trim() || !summary.trim()) throw new Error("标题和总结不能为空。");
-    if (session.isGroup && !participantIds?.some(id=>session.participantIds?.includes(id))) throw new Error("请勾选本场实际参与的角色。");
-    const next = { ...archive, participantIds: session.isGroup ? participantIds?.filter(id=>session.participantIds?.includes(id)) : undefined, title: title.trim(), summary: summary.trim(), storyStartedAt: start, storyEndedAt: end || undefined };
+    const allowedParticipants = new Set([...(session.participantIds || []), ...(archive.participantIds || [])]);
+    const selectedParticipants = session.isGroup ? participantIds?.filter(id => allowedParticipants.has(id)) : undefined;
+    if (session.isGroup && !selectedParticipants?.length && archive.memoryTarget === "short_term") throw new Error("请勾选本场实际参与的角色。");
+    const next = { ...archive, participantIds: selectedParticipants, title: title.trim(), summary: summary.trim(), storyStartedAt: start, storyEndedAt: end || undefined };
     if (archive.memoryTarget !== "short_term") await writeMemory(session, next);
     updateChatOfflineArchive(session.id, next);
 }
