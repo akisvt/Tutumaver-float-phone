@@ -428,7 +428,7 @@ export function PhoneThemeApp({
                   <span className="card-icon card-icon-glass"><Type size={20}/></span>
                   <span className="menu-label appearance-menu-item-label">隐藏应用名称</span>
                   <label className="block w-10 h-[22px] cursor-pointer relative shrink-0 ml-auto">
-                    <input aria-label="隐藏应用名称" type="checkbox" checked={gridConfig.hideLabels} onChange={e=>void changeDesktopGrid({hideLabels:e.target.checked})} className="w-full h-full rounded-[11px] m-0 outline-none" style={{appearance:"none",backgroundColor:gridConfig.hideLabels?"var(--c-success)":"var(--c-page-body-bg)",transition:"0.2s"}}/>
+                    <input aria-label="隐藏应用名称" type="checkbox" role="switch" checked={gridConfig.hideLabels} onChange={e=>void changeDesktopGrid({hideLabels:e.target.checked})} className="w-full h-full rounded-[11px] m-0 outline-none" style={{appearance:"none",backgroundColor:gridConfig.hideLabels?"var(--c-success)":"var(--c-page-body-bg)",transition:"0.2s"}}/>
                     <div className="absolute w-[18px] h-[18px] bg-white rounded-full top-[2px] pointer-events-none" style={{left:gridConfig.hideLabels?20:2,transition:"0.2s",boxShadow:"0 2px 4px rgba(0,0,0,0.15)"}}/>
                   </label>
                 </div>
@@ -448,7 +448,7 @@ export function PhoneThemeApp({
                         onClick={(e) => e.stopPropagation()}
                       >
                         <input
-                          type="checkbox"
+                          type="checkbox" role="switch"
                           checked={!draft.hideTopBar}
                           onChange={(e) => { const next = { ...draft, hideTopBar: !e.target.checked }; onDraftChange(next); onApply(next); }}
                           className="w-full h-full rounded-[11px] m-0 outline-none"
@@ -833,7 +833,7 @@ export function PhoneThemeApp({
                 onClick={(e) => e.stopPropagation()}
               >
                 <input
-                  type="checkbox"
+                  type="checkbox" role="switch"
                   checked={islandHidden}
                   onChange={(e) => {
                     const next = { ...draft, cssOverrides: { ...draft.cssOverrides, "--status-island-visibility": e.target.checked ? "hidden" : "visible" } };
