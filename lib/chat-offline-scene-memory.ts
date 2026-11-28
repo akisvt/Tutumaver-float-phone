@@ -6,6 +6,8 @@ import { loadMemoryEntries, saveMemoryEntry, incrementEventCounter } from "./mem
 import type { MemoryEntry } from "./memory-types";
 import { archiveChatOfflineScene, assertChatOfflineSceneUnchanged, ensureChatOfflineScene, loadChatOfflineSceneState, loadChatOfflineTurns, updateChatOfflineArchive, type ChatOfflineScene, type ChatOfflineArchive } from "./chat-offline-storage";
 
+export const DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT = 100_000;
+
 export type OfflineSceneDraft = { scene: ChatOfflineScene; fingerprint: string; summary: string };
 export function validateOfflineStoryTime(start: string, end?: string): void {
     if (!start || !Number.isFinite(new Date(start).getTime())) throw new Error("请选择故事开始时间。");
@@ -16,7 +18,7 @@ export function offlineStoryLabel(start: string, end?: string): string {
     return `${fmt(start)}${end ? ` — ${fmt(end)}` : "（结束时间未指定）"}`;
 }
 
-export async function summarizeChatOfflineScene(session: ChatSession, signal?: AbortSignal, storyStart?: string, storyEnd?: string): Promise<OfflineSceneDraft> {
+export async function summarizeChatOfflineScene(session: ChatSession, signal?: AbortSignal, storyStart?: string, storyEnd?: string, directCharLimit = DEFAULT_OFFLINE_SUMMARY_CHAR_LIMIT): Promise<OfflineSceneDraft> {
     const scene = ensureChatOfflineScene(session.id, session.contactId);
     const turns = loadChatOfflineTurns(session.id);
     if (!turns.length) throw new Error("本次还没有线下内容。");
@@ -63,10 +65,10 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
     const original = turns.map(turn => ({ user: turn.userContent, character: turn.assistantContent }));
     let summary: string;
     // Prefer one request for the whole scene. Split only larger inputs to limit request size.
-    if (JSON.stringify(original).length <= 44000) {
+    if (JSON.stringify(original).length <= directCharLimit) {
         summary = await ask(instructions, { storyTime, turns: original }, 2048, "");
     } else {
-        const chunkLimit = 28000;
+        const chunkLimit = Math.floor(directCharLimit * 0.64);
         const chunks: string[] = [];
         let pending = "";
         const flush = () => { if (pending) { chunks.push(pending); pending = ""; } };
