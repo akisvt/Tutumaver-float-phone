@@ -62,12 +62,11 @@ export async function summarizeChatOfflineScene(session: ChatSession, signal?: A
 
     const original = turns.map(turn => ({ user: turn.userContent, character: turn.assistantContent }));
     let summary: string;
-    // Long offline scenes previously sent every turn in a single request. This can
-    // exceed proxy/model limits and make the browser report a generic fetch failure.
-    if (JSON.stringify(original).length <= 22000) {
+    // Prefer one request for the whole scene. Split only larger inputs to limit request size.
+    if (JSON.stringify(original).length <= 44000) {
         summary = await ask(instructions, { storyTime, turns: original }, 2048, "");
     } else {
-        const chunkLimit = 14000;
+        const chunkLimit = 28000;
         const chunks: string[] = [];
         let pending = "";
         const flush = () => { if (pending) { chunks.push(pending); pending = ""; } };
