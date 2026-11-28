@@ -1586,7 +1586,8 @@
 .char-preferences .char-preferences-lock, .wt-paper label:has(input[type="checkbox"]) { display:flex; flex-direction:row; align-items:center; gap:7px; min-height:32px; cursor:pointer; }
 .char-preferences-lock input[type="checkbox"], .wt-paper input[type="checkbox"] { appearance:none; -webkit-appearance:none; width:15px; height:15px; min-width:15px; min-height:15px; flex:0 0 15px; margin:0; padding:0; border:1px solid #999; border-radius:3px; background:#f4f4f4; display:grid; place-content:center; vertical-align:middle; box-shadow:none; }
 .char-preferences-lock input:checked, .wt-paper input[type="checkbox"]:checked { background:#444; border-color:#444; }
-.char-preferences-lock input:checked::after, .wt-paper input[type="checkbox"]:checked::after { content:""; width:7px; height:4px; border-left:1.5px solid white; border-bottom:1.5px solid white; transform:rotate(-45deg) translateY(-1px); }
+/* Global circular checkbox draws its single tick via ::before. */
+.char-preferences-lock input:checked::after, .wt-paper input[type="checkbox"]:checked::after { content:none; display:none; }
 .char-preferences-lock input:focus-visible, .wt-paper input[type="checkbox"]:focus-visible { outline:2px solid #999; outline-offset:3px; }
 .char-preferences-lock input:disabled { opacity:.45; }
 
